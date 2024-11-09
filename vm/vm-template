@@ -1,0 +1,1127 @@
+#!/usr/bin/env bash
+
+# Copyright (c) 2021-2024 tteck
+# Author: tteck (tteckster)
+# License: MIT
+# https://github.com/tteck/Proxmox/raw/main/LICENSE
+
+function header_info {
+  clear
+  cat <<"EOF"
+   __  ____                __           ______                     __      __     
+  / / / / /_  __  ______  / /___  __   /_  __/__  ____ ___  ____  / /___ _/ /____ 
+ / / / / __ \/ / / / __ \/ __/ / / /    / / / _ \/ __ `__ \/ __ \/ / __ `/ __/ _ \
+/ /_/ / /_/ / /_/ / / / / /_/ /_/ /    / / /  __/ / / / / / /_/ / / /_/ / /_/  __/
+\____/_.___/\__,_/_/ /_/\__/\__,_/    /_/  \___/_/ /_/ /_/ .___/_/\__,_/\__/\___/ 
+                                                        /_/                       
+EOF
+}
+header_info
+echo -e "\n Loading..."
+NEXTID=$(pvesh get /cluster/nextid)
+TIMEZONE=$(cat /etc/timezone)
+BACKTITLE="Proxmox VE Helper Scripts - Ubuntu Template"
+
+YW=$(echo "\033[33m")
+BL=$(echo "\033[36m")
+HA=$(echo "\033[1;34m")
+RD=$(echo "\033[01;31m")
+BGN=$(echo "\033[4;92m")
+GN=$(echo "\033[1;92m")
+DGN=$(echo "\033[32m")
+CL=$(echo "\033[m")
+BFR="\\r\\033[K"
+HOLD="-"
+CM="${GN}✓${CL}"
+CROSS="${RD}✗${CL}"
+THIN="discard=on,ssd=1,"
+set -e
+trap 'error_handler $LINENO "$BASH_COMMAND"' ERR
+trap cleanup EXIT
+function error_handler() {
+  local exit_code="$?"
+  local line_number="$1"
+  local command="$2"
+  local error_message="${RD}[ERROR]${CL} in line ${RD}$line_number${CL}: exit code ${RD}$exit_code${CL}: while executing command ${YW}$command${CL}"
+  echo -e "\n$error_message\n"
+  cleanup_vmid
+}
+
+function cleanup_vmid() {
+  if qm status $VMID &>/dev/null; then
+    qm stop $VMID &>/dev/null
+    qm destroy $VMID &>/dev/null
+  fi
+}
+
+function cleanup() {
+  popd >/dev/null
+  rm -rf $TEMP_DIR
+}
+
+TEMP_DIR=$(mktemp -d)
+pushd $TEMP_DIR >/dev/null
+if whiptail --backtitle "${BACKTITLE}" --title "Ubuntu Template" --yesno "This will create a new Ubuntu Template. Proceed?" 10 58; then
+  :
+else
+  header_info && echo -e "⚠ User exited script \n" && exit
+fi
+
+function msg_info() {
+  local msg="$1"
+  echo -ne " ${HOLD} ${YW}${msg}..."
+}
+
+function msg_ok() {
+  local msg="$1"
+  echo -e "${BFR} ${CM} ${GN}${msg}${CL}"
+}
+
+function msg_error() {
+  local msg="$1"
+  echo -e "${BFR} ${CROSS} ${RD}${msg}${CL}"
+}
+
+function check_root() {
+  if [[ "$(id -u)" -ne 0 || $(ps -o comm= -p $PPID) == "sudo" ]]; then
+    clear
+    msg_error "Please run this script as root."
+    echo -e "\nExiting..."
+    sleep 2
+    exit
+  fi
+}
+
+# TODO: Update
+function pve_check() {
+  if ! pveversion | grep -Eq "pve-manager/(7\.4-(1[3-8])|8\.[1-2])"; then
+    msg_error "This version of Proxmox Virtual Environment is not supported"
+    echo -e "Requires PVE7 Version 7.4-13 or later, or PVE8 Version 8.1.1 or later."
+    echo -e "Exiting..."
+    sleep 2
+    exit
+  fi
+}
+
+function arch_check() {
+  if [ "$(dpkg --print-architecture)" != "amd64" ]; then
+    msg_error "This script will not work with PiMox! \n"
+    echo -e "Exiting..."
+    sleep 2
+    exit
+  fi
+}
+
+function ssh_check() {
+  if command -v pveversion >/dev/null 2>&1; then
+    if [ -n "${SSH_CLIENT:+x}" ]; then
+      if whiptail --backtitle "${BACKTITLE}" --defaultno --title "SSH DETECTED" --yesno "It's suggested to use the Proxmox shell instead of SSH, since SSH can create issues while gathering variables. Would you like to proceed with using SSH?" 10 62; then
+        echo "you've been warned"
+      else
+        clear
+        exit
+      fi
+    fi
+  fi
+}
+
+function exit-script() {
+  #clear
+  echo -e "⚠  User exited script \n"
+  exit
+}
+
+function default_settings() {
+  DISTRO="Ubuntu 22.04"
+  APT_CACHER="no"
+  APT_CACHER_IP=""
+  INSTALL_GUESTAGENT="yes"
+  INSTALL_DOCKER="no"
+  INSTALL_PORTAINER="no"
+  INSTALL_DOCKGE="no"
+  PACKAGE_COUNT=1
+  VMID="$NEXTID"
+  FORMAT=",efitype=4m"
+  MACHINE=""
+  DISK_CACHE=""
+  HN="ubuntu-2204-template"
+  CPU_TYPE=""
+  CORE_COUNT="2"
+  RAM_SIZE="2048"
+  BRG="vmbr0"
+  ADD_PROXMOX_SSH="yes"
+  ADD_ADDITIONAL_SSH="no"
+  CI_USER="ubuntu"
+  CI_PASSWORD="ubuntu"
+  SSH_KEYS_COUNT=1
+  ALLOW_SSH_PASSWORD="yes"
+
+  echo -e "${DGN}Using Distro: ${BGN}${DISTRO}${CL}"
+  echo -e "${DGN}Using Apt-Cacher: ${BGN}${APT_CACHER}${CL}"
+  echo -e "${DGN}Install Guest-Agent: ${BGN}${INSTALL_GUESTAGENT}${CL}"
+  echo -e "${DGN}Install Docker: ${BGN}${INSTALL_DOCKER}${CL}"
+  echo -e "${DGN}Install Portainer: ${BGN}${INSTALL_PORTAINER}${CL}"
+  echo -e "${DGN}Install Dockge: ${BGN}${INSTALL_DOCKGE}${CL}"
+  echo -e "${DGN}Packages to install: ${BGN}${PACKAGE_COUNT}${CL}"
+  echo -e "${DGN}Add Proxmox SSH Key: ${BGN}${ADD_PROXMOX_SSH}${CL}"
+  echo -e "${DGN}SSH Key Count: ${BGN}${SSH_KEYS_COUNT}${CL}"
+  echo -e "${DGN}Timezone: ${BGN}${TIMEZONE}${CL}"
+  echo -e "${DGN}Username: ${BGN}${CI_USER}${CL}"
+  echo -e "${DGN}Password: ${BGN}${CI_PASSWORD}${CL}"
+  echo -e "${DGN}Allow SSH Password Login: ${BGN}${ALLOW_SSH_PASSWORD}${CL}"
+  echo -e "${DGN}Using Machine Type: ${BGN}i440fx${CL}"
+  echo -e "${DGN}Using Disk Cache: ${BGN}None${CL}"
+  echo -e "${DGN}Using Hostname: ${BGN}${HN}${CL}"
+  echo -e "${DGN}Using CPU Model: ${BGN}KVM64${CL}"
+  echo -e "${DGN}Allocated Cores: ${BGN}${CORE_COUNT}${CL}"
+  echo -e "${DGN}Allocated RAM: ${BGN}${RAM_SIZE}${CL}"
+  echo -e "${DGN}Using Bridge: ${BGN}${BRG}${CL}"
+  echo -e "${BL}Creating ${DISTRO} template using the above default settings${CL}"
+
+  if [ "$ADD_PROXMOX_SSH" == "yes" ]; then
+    cat ~/.ssh/id_rsa.pub >> "ssh_keys.rsa"
+  fi
+}
+
+function validate_ipv4() {
+  local ip=$1
+  if [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    for octet in $(echo $ip | tr '.' ' '); do
+      if ! [[ $octet -ge 0 && $octet -le 255 ]]; then
+        return 1
+      fi
+    done
+    # Valid IP
+    return 0
+  else
+    return 1
+  fi
+}
+
+function advanced_settings() {
+  PACKAGE_COUNT=0
+  SSH_KEYS_COUNT=0
+
+  if DISTRO=$(whiptail --backtitle "${BACKTITLE}" --title "DISTRO" --default-item "Ubuntu 24.04" --radiolist --cancel-button Exit-Script "Which distribution would you like to use?" 10 58 3 \
+        "Ubuntu 20.04" "(Focal Server)" ON \
+        "Ubuntu 22.04" "(Jammy Server)" OFF \
+        "Ubuntu 24.04" "(Noble Server)" OFF \
+        3>&1 1>&2 2>&3); then
+
+        echo -e "${DGN}Using Distro: ${BGN}$DISTRO${CL}"
+        case "$DISTRO" in
+          "Ubuntu 20.04")
+            HN="ubuntu-2004-template"
+            ;;
+          "Ubuntu 22.04")
+            HN="ubuntu-2204-template"
+            ;;
+          "Ubuntu 24.04")
+            HN="ubuntu-2404-template"
+            ;;
+          *)
+        esac
+  else
+      exit-script
+  fi
+
+  APT_CACHER=""
+  APT_CACHER_IP=""
+  while true; do
+    if APT_CACHER_IP=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set APT-Cacher IP (leave blank for default)" 8 58 --title "APT-Cacher IP" 3>&1 1>&2 2>&3); then
+      APT_CACHER="${APT_CACHER_IP:+yes}"
+    else
+      exit-script
+    fi
+
+    if [ "$APT_CACHER" != "yes" ]; then
+      break
+    fi
+
+    if ! validate_ipv4 "$APT_CACHER_IP"; then
+      whiptail --backtitle "${BACKTITLE}" --msgbox "$APT_CACHER_IP is not a valid IPv4 address. Please enter a valid IPv4 address." 8 58
+      continue
+    fi
+
+    if nc -w1 -z "${APT_CACHER_IP}" 3142; then
+      break
+    fi
+
+    answer=$(whiptail --backtitle "${BACKTITLE}" --title "APT-Cacher IP" --yesno "APT-Cacher is not responding at ${APT_CACHER_IP}:3142. Are you sure this is the correct IP address?" --no-button Try-Again 10 58 3>&1 1>&2 2>&3; echo $?)
+    if [ $answer -eq 0 ]; then
+      break
+    elif [ $answer -eq 1 ]; then
+      continue
+    else
+      exit-script
+    fi
+  done
+  echo -e "${DGN}Using APT-Cacher IP Address: ${BGN}${APT_CACHER_IP:-Default}${CL}"
+
+  answer=$(whiptail --backtitle "${BACKTITLE}" --title "INSTALL GUEST AGENT" --yesno "Install Guest Agent? (Recommended)" 10 58 3>&1 1>&2 2>&3; echo $?)
+  if [ $answer -eq 0 ]; then
+    INSTALL_GUESTAGENT="yes"
+    (( ++PACKAGE_COUNT ))
+  elif [ $answer -eq 1 ]; then
+    INSTALL_GUESTAGENT="no"
+  else
+    exit-script
+  fi
+  echo -e "${DGN}Install Guest-Agent: ${BGN}$INSTALL_GUESTAGENT${CL}"
+
+  answer=$(whiptail --backtitle "${BACKTITLE}" --title "INSTALL DOCKER" --yesno "Install Docker?" --defaultno 10 58 3>&1 1>&2 2>&3; echo $?)
+  if [ $answer -eq 0 ]; then
+    INSTALL_DOCKER="yes"
+    (( ++PACKAGE_COUNT ))
+  elif [ $answer -eq 1 ]; then
+    INSTALL_DOCKER="no"
+  else
+    exit-script
+  fi
+  echo -e "${DGN}Install Docker: ${BGN}$INSTALL_DOCKER${CL}"
+
+  if [ "$INSTALL_DOCKER" == "yes" ]; then
+    answer=$(whiptail --backtitle "${BACKTITLE}" --title "INSTALL PORTAINER" --yesno "Install Portainer?" --defaultno 10 58 3>&1 1>&2 2>&3; echo $?)
+    if [ $answer -eq 0 ]; then
+        INSTALL_PORTAINER="yes"
+        (( ++PACKAGE_COUNT ))
+    elif [ $answer -eq 1 ]; then
+        INSTALL_PORTAINER="no"
+    else
+        exit-script
+    fi
+    echo -e "${DGN}Install Portainer: ${BGN}$INSTALL_PORTAINER${CL}"
+
+    answer=$(whiptail --backtitle "${BACKTITLE}" --title "INSTALL DOCKGE" --yesno "Install Dockge?" 10 58 3>&1 1>&2 2>&3; echo $?)
+    if [ $answer -eq 0 ]; then
+        INSTALL_DOCKGE="yes"
+        (( ++PACKAGE_COUNT ))
+    elif [ $answer -eq 1 ]; then
+        INSTALL_DOCKGE="no"
+    else
+        exit-script
+    fi
+    echo -e "${DGN}Install Dockge: ${BGN}$INSTALL_DOCKGE${CL}"
+  else
+    INSTALL_PORTAINER="no"
+    INSTALL_DOCKGE="no"  
+    echo -e "${DGN}Install Portainer: ${BGN}$INSTALL_PORTAINER${CL}"
+    echo -e "${DGN}Install Dockge: ${BGN}$INSTALL_DOCKGE${CL}"
+  fi
+  echo -e "${DGN}Packages to install: ${BGN}${PACKAGE_COUNT}${CL}"
+
+  answer=$(whiptail --backtitle "${BACKTITLE}" --title "ADD PROXMOX SSH KEY" --yesno "Would you like to add the Proxmox SSH key to the template?" 10 58 3>&1 1>&2 2>&3; echo $?)
+  if [ $answer -eq 0 ]; then
+      ADD_PROXMOX_SSH="yes"
+      cat ~/.ssh/id_rsa.pub >> "ssh_keys.rsa"
+      (( ++SSH_KEYS_COUNT ))
+  elif [ $answer -eq 1 ]; then
+      ADD_PROXMOX_SSH="no"
+  else
+      exit-script
+  fi
+  echo -e "${DGN}Add Proxmox SSH Key: ${BGN}${ADD_PROXMOX_SSH}${CL}"
+
+  answer=$(whiptail --backtitle "${BACKTITLE}" --title "ADD ADDITIONAL SSH KEYS" --yesno "Would you like to add additional SSH Keys ?" --defaultno 10 58 3>&1 1>&2 2>&3; echo $?)
+  if [ $answer -eq 0 ]; then
+      ADD_ADDITIONAL_SSH="yes"
+  elif [ $answer -eq 1 ]; then
+      ADD_ADDITIONAL_SSH="no"
+  else
+      exit-script
+  fi
+  echo -e "${DGN}Add Additional SSH Key: ${BGN}${ADD_ADDITIONAL_SSH}${CL}"
+
+  if [ "$ADD_ADDITIONAL_SSH" == "yes" ]; then
+    while true; do
+      tput sc
+      tput smcup
+      tput cup 0 0
+
+      # TODO: Condense
+      echo "Enter public SSH key (in OpenSSH format)."
+
+      read public_key
+      echo "$public_key" > public_key.txt
+
+      if [[ $(ssh-keygen -l -f "public_key.txt" 2>&1) == *"is not a public key file"* ]]; then
+        msg_error "Key is not valid"
+      else
+        msg_ok "Key is valid"
+        cat public_key.txt >> "ssh_keys.rsa"
+        (( ++SSH_KEYS_COUNT ))
+      fi
+
+      rm public_key.txt
+      sleep 2
+      tput rc
+      tput rmcup
+
+      answer=$(whiptail --backtitle "${BACKTITLE}" --title "ADD ANOTHER SSH KEYS" --yesno "Would you like to add another SSH Key ?" --defaultno 10 58 3>&1 1>&2 2>&3; echo $?)
+      if [ $answer -eq 0 ]; then
+        :
+      elif [ $answer -eq 1 ]; then
+        break
+      else
+       exit-script
+      fi
+    done
+  fi
+  echo -e "${DGN}SSH Key Count: ${BGN}${SSH_KEYS_COUNT}${CL}"
+
+  answer=$(whiptail --backtitle "${BACKTITLE}" --title "ALLOW SSH PASSWORD LOGIN" --yesno "Allow users to log in with a password using SSH? (Selecting 'No' requires SSH keys for login, otherwise access via SSH will be denied)" 10 58 3>&1 1>&2 2>&3; echo $?)
+  if [ $answer -eq 0 ]; then
+    ALLOW_SSH_PASSWORD="yes"
+  elif [ $answer -eq 1 ]; then
+    ALLOW_SSH_PASSWORD="no"
+  else
+    exit-script
+  fi
+  echo -e "${DGN}Allow SSH Password Login: ${BGN}${ALLOW_SSH_PASSWORD}${CL}"
+
+  if TIMEZONE=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Timezone" 8 58 $TIMEZONE --title "TIMEZONE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $TIMEZONE ]; then
+      TIMEZONE=$(cat /etc/timezone)
+      echo -e "${DGN}Timezone: ${BGN}$TIMEZONE${CL}"
+    else
+      echo -e "${DGN}Timezone: ${BGN}$TIMEZONE${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  if CI_USER=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Default username" 8 58 ubuntu --title "USERNAME" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $CI_USER ]; then
+      CI_USER="ubuntu"
+      echo -e "${DGN}Username: ${BGN}$CI_USER${CL}"
+    else
+      CI_USER=$(echo ${CI_USER,,} | tr -d ' ')
+      echo -e "${DGN}Username: ${BGN}$CI_USER${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  if CI_PASSWORD=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Default password" 8 58 ubuntu --title "PASSWORD" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $CI_PASSWORD ]; then
+      CI_PASSWORD="ubuntu"
+      echo -e "${DGN}Password: ${BGN}$CI_PASSWORD${CL}"
+    else
+      CI_PASSWORD=$(echo ${CI_USER,,} | tr -d ' ')
+      echo -e "${DGN}Password: ${BGN}$CI_PASSWORD${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  while true; do
+    if VMID=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set Virtual Machine ID" 8 58 $NEXTID --title "VIRTUAL MACHINE ID" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z "$VMID" ]; then
+        VMID="$NEXTID"
+      fi
+      if pct status "$VMID" &>/dev/null || qm status "$VMID" &>/dev/null; then
+        echo -e "${CROSS}${RD} ID $VMID is already in use${CL}"
+        sleep 2
+        continue
+      fi
+      echo -e "${DGN}Virtual Machine ID: ${BGN}$VMID${CL}"
+      break
+    else
+      exit-script
+    fi
+  done
+
+  if MACH=$(whiptail --backtitle "${BACKTITLE}" --title "MACHINE TYPE" --radiolist --cancel-button Exit-Script "Choose Type" 10 58 2 \
+    "i440fx" "Best for compatability" ON \
+    "q35" "Best for PCI Passthrough" OFF \
+    3>&1 1>&2 2>&3); then
+    if [ $MACH = q35 ]; then
+      echo -e "${DGN}Using Machine Type: ${BGN}$MACH${CL}"
+      FORMAT=""
+      MACHINE=" -machine q35"
+    else
+      echo -e "${DGN}Using Machine Type: ${BGN}$MACH${CL}"
+      FORMAT=",efitype=4m"
+      MACHINE=""
+    fi
+  else
+    exit-script
+  fi
+
+  if DISK_CACHE=$(whiptail --backtitle "${BACKTITLE}" --title "DISK CACHE" --radiolist "Choose" --cancel-button Exit-Script 10 58 2 \
+    "0" "None (Default)" ON \
+    "1" "Write Through" OFF \
+    3>&1 1>&2 2>&3); then
+    if [ $DISK_CACHE = "1" ]; then
+      echo -e "${DGN}Using Disk Cache: ${BGN}Write Through${CL}"
+      DISK_CACHE="cache=writethrough,"
+    else
+      echo -e "${DGN}Using Disk Cache: ${BGN}None${CL}"
+      DISK_CACHE=""
+    fi
+  else
+    exit-script
+  fi
+
+  if VM_NAME=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set Hostname" 8 58 $HN --title "HOSTNAME" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $VM_NAME ]; then
+      HN="ubuntu"
+      echo -e "${DGN}Using Hostname: ${BGN}$HN${CL}"
+    else
+      HN=$(echo ${VM_NAME,,} | tr -d ' ')
+      echo -e "${DGN}Using Hostname: ${BGN}$HN${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  if CPU_TYPE1=$(whiptail --backtitle "${BACKTITLE}" --title "CPU MODEL" --radiolist "Choose" --cancel-button Exit-Script 10 58 2 \
+    "0" "KVM64 (Default)" ON \
+    "1" "Host" OFF \
+    3>&1 1>&2 2>&3); then
+    if [ $CPU_TYPE1 = "1" ]; then
+      echo -e "${DGN}Using CPU Model: ${BGN}Host${CL}"
+      CPU_TYPE=" -cpu host"
+    else
+      echo -e "${DGN}Using CPU Model: ${BGN}KVM64${CL}"
+      CPU_TYPE=""
+    fi
+  else
+    exit-script
+  fi
+
+  if CORE_COUNT=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Allocate CPU Cores" 8 58 2 --title "CORE COUNT" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $CORE_COUNT ]; then
+      CORE_COUNT="2"
+      echo -e "${DGN}Allocated Cores: ${BGN}$CORE_COUNT${CL}"
+    else
+      echo -e "${DGN}Allocated Cores: ${BGN}$CORE_COUNT${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  if RAM_SIZE=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Allocate RAM in MiB" 8 58 2048 --title "RAM" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $RAM_SIZE ]; then
+      RAM_SIZE="2048"
+      echo -e "${DGN}Allocated RAM: ${BGN}$RAM_SIZE${CL}"
+    else
+      echo -e "${DGN}Allocated RAM: ${BGN}$RAM_SIZE${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  if BRG=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set a Bridge" 8 58 vmbr0 --title "BRIDGE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+    if [ -z $BRG ]; then
+      BRG="vmbr0"
+      echo -e "${DGN}Using Bridge: ${BGN}$BRG${CL}"
+    else
+      echo -e "${DGN}Using Bridge: ${BGN}$BRG${CL}"
+    fi
+  else
+    exit-script
+  fi
+
+  if (whiptail --backtitle "${BACKTITLE}" --title "ADVANCED SETTINGS COMPLETE" --yesno "Ready to create an ${DISTRO} Template?" --no-button Do-Over 10 58); then
+    echo -e "${RD}Creating ${DISTRO} template using the above advanced settings${CL}"
+  else
+    header_info
+    echo -e "${RD}Using Advanced Settings${CL}"
+    advanced_settings
+  fi
+}
+
+function start_script() {
+  if (whiptail --backtitle "${BACKTITLE}" --title "SETTINGS" --yesno "Use Default Settings?" --no-button Advanced 10 58); then
+    header_info
+    echo -e "${BL}Using Default Settings${CL}"
+    default_settings
+  else
+    header_info
+    echo -e "${RD}Using Advanced Settings${CL}"
+    advanced_settings
+  fi
+}
+
+# TODO: Rename? (and add 'function' name)
+output_section() {
+    local section_name="$1"
+    local -n section_array="$1"
+    if [ ${#section_array[@]} -gt 0 ]; then
+        echo -e "$section_name:" >> "$CLOUDINIT_FILENAME"
+        for item in "${section_array[@]}"
+        do
+            echo -e "$item" >> "$CLOUDINIT_FILENAME"
+        done
+        echo "" >> "$CLOUDINIT_FILENAME"
+    fi
+}
+
+# TODO: function 
+cloudinit_setup() {
+
+  # TODO: Snippet validation should likely be moved to same location as storage validation
+  #       - This was originally placed here with the idea that libguestfs might also be used
+  #       - however we are only doing cloudinit now, so this can be moved.
+  msg_info "Validating Snippets Storage"
+  while read -r line; do
+    TAG=$(echo $line | awk '{print $1}')
+    TYPE=$(echo $line | awk '{printf "%-10s", $2}')
+    FREE=$(echo $line | numfmt --field 4-6 --from-unit=K --to=iec --format %.2f | awk '{printf( "%9sB", $6)}')
+    ITEM="  Type: $TYPE Free: $FREE "
+    OFFSET=2
+    if [[ $((${#ITEM} + $OFFSET)) -gt ${MSG_MAX_LENGTH:-} ]]; then
+      MSG_MAX_LENGTH=$((${#ITEM} + $OFFSET))
+    fi
+    SNIPPET_STORAGE_MENU+=("$TAG" "$ITEM" "OFF")
+  done < <(pvesm status -content snippets | awk 'NR>1')
+  VALID=$(pvesm status -content snippets | awk 'NR>1')
+  if [ -z "$VALID" ]; then
+    msg_error "Unable to detect a valid snippets storage location."
+    msg_info "Examining storage to enable snippets"
+    sleep 3
+    while read -r line; do
+      TAG=$(echo $line | awk '{print $1}')
+      TYPE=$(echo $line | awk '{printf "%-10s", $2}')
+      FREE=$(echo $line | numfmt --field 4-6 --from-unit=K --to=iec --format %.2f | awk '{printf( "%9sB", $6)}')
+      ITEM="  Type: $TYPE Free: $FREE "
+      OFFSET=2
+      if [[ $((${#ITEM} + $OFFSET)) -gt ${MSG_MAX_LENGTH:-} ]]; then
+        MSG_MAX_LENGTH=$((${#ITEM} + $OFFSET))
+      fi
+      SNIPPET_STORAGE_MENU+=("$TAG" "$ITEM" "OFF")
+    done < <(pvesm status | grep -E '^(Name|.*\s(dir|glusterfs|nfs|cifs|cephfs)\s)' | awk 'NR>1')
+    VALID=$(pvesm status | grep -E '^(Name|.*\s(dir|glusterfs|nfs|cifs|cephfs)\s)' | awk 'NR>1')
+    if [ -z "$VALID" ]; then
+      msg_error "Unable to detect any storage location for snippets."
+      exit-script
+    else
+      while [ -z "${SNIPPET_STORAGE:+x}" ]; do
+        SNIPPET_STORAGE=$(whiptail --backtitle "${BACKTITLE}" --title "Enable Snippets Storage" --radiolist \
+          "\nYou do not have storage with snippets enabled (required)\nWhich storage would you like to enable snippets on?\n" \
+          16 $(($MSG_MAX_LENGTH + 23)) 6 \
+          "${SNIPPET_STORAGE_MENU[@]}" 3>&1 1>&2 2>&3) || exit
+      done
+    fi
+    STORAGE_CONTENT=$(grep -A 3 "$SNIPPET_STORAGE" /etc/pve/storage.cfg | grep -A2 "$SNIPPET_STORAGE" | awk '/content/ {print $2}')
+
+    # TODO: Check not empty? If empty "snippets", not empty ",snippets"
+    STORAGE_CONTENT+=",snippets"
+    pvesm set ${SNIPPET_STORAGE} --content ${STORAGE_CONTENT} 1>&/dev/null
+    if echo "$output=$(pvesm status --content snippets)" | grep -q "${SNIPPET_STORAGE}"; then
+      msg_ok "Snippets enabled on ${CL}${BL}$SNIPPET_STORAGE${CL}"
+    else
+      msg_error "Could not enable snippets on ${CL}${BL}$SNIPPET_STORAGE${CL}"
+      exit-script
+    fi
+
+  elif [ $((${#SNIPPET_STORAGE_MENU[@]} / 3)) -eq 1 ]; then
+    # 1 Snippet location found - use it
+    SNIPPET_STORAGE=${SNIPPET_STORAGE_MENU[0]}
+  else
+    # >1 Snippet location found, ask to choose
+    while [ -z "${SNIPPET_STORAGE:+x}" ]; do
+      SNIPPET_STORAGE=$(whiptail --backtitle "${BACKTITLE}" --title "Snippet Storage Pools" --radiolist \
+        "\nWhich storage pool you would like to use for snippets?\n" \
+        16 $(($MSG_MAX_LENGTH + 23)) 6 \
+        "${SNIPPET_STORAGE_MENU[@]}" 3>&1 1>&2 2>&3) || exit
+    done
+  fi
+
+  msg_ok "Using ${CL}${BL}$SNIPPET_STORAGE${CL} ${GN}for Snippets Storage Location."
+  SNIPPETS_PATH=$(grep -A 3 "$SNIPPET_STORAGE" /etc/pve/storage.cfg | grep path | awk '{print $2}')
+  SNIPPETS_PATH="$SNIPPETS_PATH/snippets"
+
+  # TODO : Check folder, not just the string
+  if [ ! -d "$SNIPPETS_PATH" ]; then
+      msg_error "Snippets directory does not exist."
+      exit-script
+  fi
+
+  # TODO: Caps?
+  apt=()
+  packages=()
+  groups=()
+  write_files=()
+  runcmd=()
+  system_info=()
+
+  if [ "$INSTALL_GUESTAGENT" == "yes" ]; then
+      packages+=(
+      "  - qemu-guest-agent"
+      )
+
+      runcmd+=(
+      "  - systemctl enable qemu-guest-agent"
+      "  - systemctl start qemu-guest-agent"
+      "  - systemctl restart systemd-sysctl"
+      )
+  fi
+
+  if [ "$INSTALL_DOCKER" == "yes" ]; then
+      apt+=(
+      "  sources:"
+      "    docker.list:"
+      "      source: deb [arch=amd64] https://download.docker.com/linux/ubuntu \$RELEASE stable"
+      "      keyid: 9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
+      )
+
+      packages+=(
+      "  - apt-transport-https"
+      "  - ca-certificates"
+      "  - curl"
+      "  - gnupg-agent"
+      "  - software-properties-common"
+      "  - docker-ce"
+      "  - docker-ce-cli"
+      "  - containerd.io"
+      )
+
+      write_files+=(
+      "  - path: /etc/sysctl.d/enabled_ipv4_forwarding.conf"
+      "    content: |"
+      "      net.ipv4.conf.all.forwarding=1"
+      )
+
+      groups+=(
+      "  - docker"
+      )
+
+      system_info+=(
+      "  default_user:"
+      "    groups: [docker]"        
+      )
+  fi
+
+  if [ "$APT_CACHER" == "yes" ]; then
+    write_files+=(
+    "  - path: /etc/apt/apt.conf.d/00aptproxy"
+    "    content: |"
+    "      Acquire::http::Proxy-Auto-Detect \"/usr/local/bin/apt-proxy-detect.sh\";"
+    "  - path: /usr/local/bin/apt-proxy-detect.sh"
+    "    permissions: '0755'"
+    "    content: |"
+    "      #!/bin/bash"
+    "      if nc -w1 -z \"${APT_CACHER_IP}\" 3142; then"
+    "        echo -n \"http://${APT_CACHER_IP}:3142\""
+    "      else"
+    "        echo -n \"DIRECT\""
+    "      fi"
+    )
+  fi
+
+  if [ "$INSTALL_PORTAINER" == "yes" ]; then
+      runcmd+=(
+      "  - docker volume create portainer_data"
+      "  - docker run -d -p 8000:8000 -p 9443:9443 --name portainer --restart=always -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data portainer/portainer-ce:latest"
+      )
+  fi
+
+  if [ "$INSTALL_DOCKGE" == "yes" ]; then
+      packages+=(
+      "  - docker-compose"
+      )
+
+      runcmd+=(
+      "  - mkdir -p /opt/dockge"
+      "  - mkdir -p /opt/stacks"
+      "  - curl https://raw.githubusercontent.com/louislam/dockge/master/compose.yaml --output /opt/dockge/compose.yaml"
+      "  - [ sh, -c, 'sudo curl -L https://github.com/docker/compose/releases/download/$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep "tag_name" | cut -d \" -f4)/docker-compose-$(uname -s)-$(uname -m) -o /usr/local/bin/docker-compose' ]"
+      "  - chmod +x /usr/local/bin/docker-compose"
+      "  - docker-compose -f /opt/dockge/compose.yaml up -d"
+      )
+  fi
+
+  CLOUDINIT_FILEID=${VMID}_cloudinit_$(date +"%Y%m%d%H%M%S").yaml
+  CLOUDINIT_FILENAME="${SNIPPETS_PATH}/${CLOUDINIT_FILEID}"
+  echo -e "CLOUDINIT_FILENAME is $CLOUDINIT_FILENAME"
+
+  cat <<EOF > "$CLOUDINIT_FILENAME"
+#cloud-config
+
+timezone: ${TIMEZONE}
+
+ssh_pwauth: $(if [ "$ALLOW_SSH_PASSWORD" = "yes" ]; then echo "true"; else echo "false"; fi)
+
+power_state:
+  mode: reboot
+  message: "System reboot required."
+  condition: ["/bin/sh", "-c", "test -f /var/run/reboot-required"]
+
+EOF
+
+  output_section "apt"
+  output_section "packages"
+  output_section "runcmd"
+  output_section "write_files"
+  output_section "groups"
+  output_section "system_info"
+
+  cat ${CLOUDINIT_FILENAME}
+
+}
+
+# TODO: Message 'Tip: If you intend making multiple clones, consider installing apt-cache-ng first. This will allow apt updates to be cached locally, avoiding downloading them repeatedly'
+
+check_root
+arch_check
+pve_check
+ssh_check
+start_script
+
+# TODO: Do we need this?
+if [ "$PACKAGE_COUNT" -gt 0 ]; then
+    cloudinit_setup
+fi
+
+msg_info "Validating Storage"
+while read -r line; do
+  TAG=$(echo $line | awk '{print $1}')
+  TYPE=$(echo $line | awk '{printf "%-10s", $2}')
+  FREE=$(echo $line | numfmt --field 4-6 --from-unit=K --to=iec --format %.2f | awk '{printf( "%9sB", $6)}')
+  ITEM="  Type: $TYPE Free: $FREE "
+  OFFSET=2
+  if [[ $((${#ITEM} + $OFFSET)) -gt ${MSG_MAX_LENGTH:-} ]]; then
+    MSG_MAX_LENGTH=$((${#ITEM} + $OFFSET))
+  fi
+  STORAGE_MENU+=("$TAG" "$ITEM" "OFF")
+done < <(pvesm status -content images | awk 'NR>1')
+VALID=$(pvesm status -content images | awk 'NR>1')
+if [ -z "$VALID" ]; then
+  msg_error "Unable to detect a valid storage location."
+  exit-script
+elif [ $((${#STORAGE_MENU[@]} / 3)) -eq 1 ]; then
+  STORAGE=${STORAGE_MENU[0]}
+else
+  while [ -z "${STORAGE:+x}" ]; do
+    STORAGE=$(whiptail --backtitle "${BACKTITLE}" --title "Storage Pools" --radiolist \
+      "Which storage pool you would like to use for ${HN}?\nTo make a selection, use the Spacebar.\n" \
+      16 $(($MSG_MAX_LENGTH + 23)) 6 \
+      "${STORAGE_MENU[@]}" 3>&1 1>&2 2>&3) || exit
+  done
+fi
+
+msg_ok "Using ${CL}${BL}$STORAGE${CL} ${GN}for Storage Location."
+msg_ok "Virtual Machine ID is ${CL}${BL}$VMID${CL}."
+msg_info "Retrieving the URL for the ${DISTRO} Disk Image"
+
+case "$DISTRO" in
+  "Ubuntu 20.04")
+    URL=https://cloud-images.ubuntu.com/focal/current/focal-server-cloudimg-amd64.img
+    ;;
+  "Ubuntu 22.04")
+    URL=https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+    ;;
+  "Ubuntu 24.04")
+    URL=https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+    ;;
+  *)
+esac
+
+msg_ok "${CL}${BL}${URL}${CL}"
+wget -q --show-progress $URL
+echo -en "\e[1A\e[0K"
+FILE=$(basename $URL)
+msg_ok "Downloaded ${CL}${BL}${FILE}${CL}"
+
+# TODO: Remove
+#msg_info "Copying image"
+##cp /root/original-jammy-server-cloudimg-amd64.img jammy-server-cloudimg-amd64.img
+#cp /root/original-${FILE} ${FILE}
+#msg_ok "Copied image"
+
+STORAGE_TYPE=$(pvesm status -storage $STORAGE | awk 'NR>1 {print $2}')
+case $STORAGE_TYPE in
+nfs | dir)
+  DISK_EXT=".qcow2"
+  DISK_REF="$VMID/"
+  DISK_IMPORT="-format qcow2"
+  THIN=""
+  ;;
+btrfs)
+  DISK_EXT=".raw"
+  DISK_REF="$VMID/"
+  DISK_IMPORT="-format raw"
+  FORMAT=",efitype=4m"
+  THIN=""
+  ;;
+esac
+for i in {0,1}; do
+  disk="DISK$i"
+  eval DISK${i}=vm-${VMID}-disk-${i}${DISK_EXT:-}
+  eval DISK${i}_REF=${STORAGE}:${DISK_REF:-}${!disk}
+done
+
+PACKAGE_LIST=""
+PACKAGE_SIZE=0
+
+if [ "$PACKAGE_COUNT" -gt 0 ]; then
+  if [ "$INSTALL_GUESTAGENT" == "yes" ]; then
+    PACKAGE_LIST+="Guest-Agent "
+    (( PACKAGE_SIZE+=10 ))
+  fi
+  if [ "$INSTALL_DOCKER" == "yes" ]; then
+    PACKAGE_LIST+="Docker "
+    (( PACKAGE_SIZE+=550 ))
+  fi
+  if [ "$INSTALL_PORTAINER" == "yes" ]; then
+    PACKAGE_LIST+="Portainer "
+    (( PACKAGE_SIZE+=280 ))
+  fi
+  if [ "$INSTALL_DOCKGE" == "yes" ]; then
+    PACKAGE_LIST+="Dockge "
+    (( PACKAGE_SIZE+=680 ))
+  fi
+  PACKAGE_LIST=$(echo "$PACKAGE_LIST" | sed -e 's/ $//' -e 's/ /, /g')
+fi
+
+# TODO: Disk size for template should account for size of packages to install
+msg_info "Creating a ${DISTRO} VM"
+qm create $VMID -agent 1${MACHINE} -tablet 0 -localtime 1 -bios ovmf${CPU_TYPE} -cores $CORE_COUNT -memory $RAM_SIZE \
+  -name $HN -tags proxmox-helper-scripts -net0 virtio,bridge=$BRG -onboot 1 -ostype l26 -scsihw virtio-scsi-pci
+pvesm alloc $STORAGE $VMID $DISK0 4M 1>&/dev/null
+qm importdisk $VMID ${FILE} $STORAGE ${DISK_IMPORT:-} 1>&/dev/null
+qm set $VMID \
+  -efidisk0 ${DISK0_REF}${FORMAT} \
+  -scsi0 ${DISK1_REF},${DISK_CACHE}${THIN}size=2G \
+  -ide2 ${STORAGE}:cloudinit \
+  -cicustom "vendor=${SNIPPET_STORAGE}:snippets/${CLOUDINIT_FILEID}" \
+  -ciuser ${CI_USER} \
+  -cipassword ${CI_PASSWORD} \
+  -ipconfig0 ip=dhcp,ip6=dhcp \
+  -boot order=scsi0 \
+  -serial0 socket \
+  -description "<div align='center'><a href='https://Helper-Scripts.com'><img src='https://raw.githubusercontent.com/tteck/Proxmox/main/misc/images/logo-81x112.png'/></a>
+
+  <a href='https://ko-fi.com/D1D7EP4GF'><img src='https://img.shields.io/badge/&#x2615;-Buy me a coffee-blue' /></a>
+
+  # ${DISTRO} Template
+  ### ${PACKAGE_LIST}
+
+  </div>" >/dev/null
+
+if [ "$SSH_KEYS_COUNT" -gt 0 ]; then
+  qm set $VMID -sshkeys ssh_keys.rsa 1>&/dev/null
+fi
+
+msg_ok "Created a ${DISTRO} VM ${CL}${BL}(${HN})"
+
+if [ "$PACKAGE_SIZE" -gt 0 ]; then
+  msg_info "Increasing disk size by ${PACKAGE_SIZE}M for ${PACKAGE_LIST}"
+  qm resize $VMID scsi0 +${PACKAGE_SIZE}M 1>&/dev/null
+  DISK_SIZE=$(qm config $VMID | grep 'scsi0.*size=' | awk -F'size=' '{print $2}' | awk -F',' '{print $1}')
+  msg_ok "Disk size increased to ${CL}${BL}${DISK_SIZE}${CL}"
+fi
+
+msg_info "Converting VM to Template"
+qm template $VMID 1>&/dev/null
+msg_ok "Converted to template"
+sleep 2
+
+if (whiptail --backtitle "${BACKTITLE}" --title "CLONE TEMPLATE" --yesno "Would you like to clone this template to a new VM?" 10 58); then
+  while true; do
+    echo -e "${DGN}Cloning Template ID: ${BGN}$VMID${CL}"
+    CLONE_NEXTID=$(pvesh get /cluster/nextid)
+    while true ;do
+      if CLONE_VMID=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set Virtual Machine ID" 8 58 $CLONE_NEXTID --title "VIRTUAL MACHINE ID" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+        if [ -z "$CLONE_VMID" ]; then
+          CLONE_VMID="$CLONE_NEXTID"
+        fi
+        if pct status "$CLONE_VMID" &>/dev/null || qm status "$CLONE_VMID" &>/dev/null; then
+          echo -e "${CROSS}${RD} ID $CLONE_VMID is already in use${CL}"
+          sleep 2
+          continue
+        fi
+        echo -e "${DGN}Virtual Machine ID: ${BGN}$CLONE_VMID${CL}"
+        break
+      else
+        exit-script
+      fi
+    done
+
+    if VM_NAME=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set Hostname" 8 58 "ubuntu" --title "HOSTNAME" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z $VM_NAME ]; then
+        HN="ubuntu"
+        echo -e "${DGN}Using Hostname: ${BGN}$HN${CL}"
+      else
+        HN=$(echo ${VM_NAME,,} | tr -d ' ')
+        echo -e "${DGN}Using Hostname: ${BGN}$HN${CL}"
+      fi
+    else
+      exit-script
+    fi
+
+    while true; do
+      if ! NET=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set a Static IPv4 Address" 8 58 dhcp --title "IP ADDRESS" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+        exit-script
+      fi
+      if [ "$NET" = "dhcp" ]; then
+        echo -e "${DGN}Using IP address: ${BGN}$NET${CL}"
+        break
+      fi
+      if ! validate_ipv4 "$NET"; then
+        whiptail --backtitle "${BACKTITLE}" --msgbox "$NET is not a valid IPv4 address. Please enter a valid IPv4 address or 'dhcp'" 8 58
+        continue
+      fi
+      if ping -c 1 -W 1 $NET >/dev/null 2>&1; then
+        whiptail --backtitle "${BACKTITLE}" --msgbox "$NET is already in use. Please enter a different IP address or 'dhcp'" 8 58
+        continue
+      fi
+      echo -e "${DGN}Using IP address: ${BGN}$NET${CL}"
+      NET=$NET/24
+      break
+    done
+
+    if [ "$NET" != "dhcp" ]; then
+      while true; do
+        if ! GATE1=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Enter Gateway IP address" 8 58 --title "Gateway IP" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+          exit-script
+        fi
+
+        if ! validate_ipv4 "$GATE1"; then
+          whiptail --backtitle "${BACKTITLE}" --msgbox "$GATE1 is not a valid IPv4 address. Please enter a valid IPv4 addres." 8 58
+          continue
+        fi
+   
+        GATE=",gw=$GATE1"
+        echo -e "${DGN}Using Gateway IP Address: ${BGN}$GATE1${CL}"
+        break
+      done
+    else
+      GATE=""
+      echo -e "${DGN}Using Gateway IP Address: ${BGN}Default${CL}"
+    fi
+
+    # TODO: Ideally we check size of current disk rather than '3'
+    if DISK_SIZE=$(whiptail --backtitle "${BACKTITLE}" --inputbox "VM Disk Size (GB) (leave blank for default)" 8 58 --title "DISK SIZE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [[ $DISK_SIZE =~ ^[0-9]+$ ]]; then
+        if [ "$DISK_SIZE" -lt 3 ]; then
+          DISK_SIZE=3
+          echo -e "${DGN}Using Disk Size: ${BGN}$DISK_SIZE${BGN}GB (3GB Minimum)${CL}"
+        else
+          echo -e "${DGN}Using Disk Size: ${BGN}$DISK_SIZE${BGN}GB${CL}"
+        fi
+      else
+        echo -e "${DGN}Using Disk Size: ${BGN}Same as template${CL}"
+        DISK_SIZE=0
+      fi
+    else
+      exit-script
+    fi
+
+    if BRG=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set a Bridge" 8 58 vmbr0 --title "BRIDGE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z $BRG ]; then
+        BRG="vmbr0"
+        echo -e "${DGN}Using Bridge: ${BGN}$BRG${CL}"
+      else
+        echo -e "${DGN}Using Bridge: ${BGN}$BRG${CL}"
+      fi
+    else
+      exit-script
+    fi
+
+    GEN_MAC=02:$(openssl rand -hex 5 | awk '{print toupper($0)}' | sed 's/\(..\)/\1:/g; s/.$//')
+    if MAC1=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set a MAC Address" 8 58 $GEN_MAC --title "MAC ADDRESS" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z $MAC1 ]; then
+        MAC="$GEN_MAC"
+        echo -e "${DGN}Using MAC Address: ${BGN}$MAC${CL}"
+      else
+        MAC="$MAC1"
+        echo -e "${DGN}Using MAC Address: ${BGN}$MAC1${CL}"
+      fi
+    else
+      exit-script
+    fi
+
+    if VLAN1=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set a Vlan(leave blank for default)" 8 58 --title "VLAN" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z $VLAN1 ]; then
+        VLAN1="Default"
+        VLAN=""
+        echo -e "${DGN}Using Vlan: ${BGN}$VLAN1${CL}"
+      else
+        VLAN=",tag=$VLAN1"
+        echo -e "${DGN}Using Vlan: ${BGN}$VLAN1${CL}"
+      fi
+    else
+      exit-script
+    fi
+
+    if MTU1=$(whiptail --backtitle "${BACKTITLE}" --inputbox "Set Interface MTU Size (leave blank for default)" 8 58 --title "MTU SIZE" --cancel-button Exit-Script 3>&1 1>&2 2>&3); then
+      if [ -z $MTU1 ]; then
+        MTU1="Default"
+        MTU=""
+        echo -e "${DGN}Using Interface MTU Size: ${BGN}$MTU1${CL}"
+      else
+        MTU=",mtu=$MTU1"
+        echo -e "${DGN}Using Interface MTU Size: ${BGN}$MTU1${CL}"
+      fi
+    else
+      exit-script
+    fi
+
+    answer=$(whiptail --backtitle "${BACKTITLE}" --title "START VM" --yesno "Start VM once cloned?" 10 58 3>&1 1>&2 2>&3; echo $?)
+    if [ $answer -eq 0 ]; then
+      START_VM="yes"
+    elif [ $answer -eq 1 ]; then
+      START_VM="no"
+    else
+      exit-script
+    fi
+    echo -e "${DGN}Start VM: ${BGN}$START_VM${CL}"
+
+    # Ask for subnet and convert to /24 /8 etc ...?
+
+    msg_info "Cloning Template"
+    qm clone $VMID $CLONE_VMID --name $HN --full 1>&/dev/null
+    # TODO : Changed this. Minimum size of 3GB
+    if [ "$DISK_SIZE" -ge 3 ]; then
+      qm resize $CLONE_VMID scsi0 ${DISK_SIZE}G 1>&/dev/null
+    fi
+
+    msg_ok "Cloned to Machine ID ${CL}${BL}$CLONE_VMID${CL}."
+    qm set $CLONE_VMID \
+      -net0 virtio,bridge=$BRG,macaddr=$MAC$VLAN$MTU \
+      -ipconfig0 ip=$NET$GATE,ip6=dhcp 1>&/dev/null
+
+
+    # TODO: Can we start this in a terminal in a new windows?
+    if [ "$START_VM" == "yes" ]; then
+      msg_ok "Started Machine ID ${CL}${BL}$CLONE_VMID${CL}."
+      qm start $CLONE_VMID 1>&/dev/null
+    fi
+
+    answer=$(whiptail --backtitle "${BACKTITLE}" --title "CLONE TEMPLATE" --yesno "Clone again?" 10 58 3>&1 1>&2 2>&3; echo $?)
+    if [ $answer -eq 0 ]; then
+      continue
+    elif [ $answer -eq 1 ]; then
+      break
+    else
+      exit-script
+    fi
+  done
+fi
+
+msg_ok "Completed Successfully!\n"
+
+
+# TODO: Ask for disk size for template ? We may want template to be a minimum size
+# TODO: Structure code so functions are in one section
+# TODO: Ask to enable/disable root access
+# TODO: Feedback to user the ports for dockge and/or portainer
+# TODO: When asking about allowing SSH password, next question is timezone, should be username/pass
+# BUG: Guest-Agent not running when using apt-cache write files
+# BUG: Running out of disk space when installing updates. Need to ensure disk size is large enough. Appears to be mainly on 22.04 after updates (use default, not advanced)
+#sed -i -e 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' -e 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+#sed -i -e 's/#PermitRootLogin yes/PermitRootLogin no/g' -e 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+
+#rm /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
+#systemctl restart sshd
+
+# ssh_pwauth: false
+# allow_public_ssh_keys: true
+# disable_root: true
+# AllowUsers username1 username2
+
+# Return the size of scsi0
+# qm config 101 | grep scsi0 | awk -F'size=' '{print $2}' | awk -F',' '{print $1}'
