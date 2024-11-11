@@ -13,27 +13,17 @@
 #network_check
 #update_os
 
+source "../misc/install.func"
+VERBOSE="yes"
+color
+verb_ip6
+catch_errors
+
 function generate_password () {
     set +o pipefail
     < /dev/urandom tr -dc A-Za-z0-9 | head -c40
     echo
     set -o pipefail
-}
-
-VERBOSE="yes"
-if [ "$VERBOSE" = "yes" ]; then
-  STD=""
-else STD="silent"; fi
-silent() { "$@" >/dev/null 2>&1; }
-
-function msg_info() {
-  local msg="$1"
-  echo "${msg}"
-}
-
-function msg_ok() {
-  local msg="$1"
-  echo "${msg}"
 }
 
 msg_info "Installing Dependencies"
@@ -99,17 +89,12 @@ STEP_CA_FINGERPRINT=$(step certificate fingerprint "${STEPPATH}/certs/root_ca.cr
 STEP_CA_PROVISIONER_PASSWORD=$(< provisioner_password )
 STEP_CA_PASSWORD=$(< password )
 
-#echo "Your CA administrative password is: $(< provisioner_password )"
-#echo "Your password is: $(< password )"
-#echo "Your CA fingerprint is : ${STEP_CA_FINGERPRINT}"
-
 shred -u provisioner_password
-#cp password /etc/step-ca/password.txt
 cp password ${STEPPATH}/password.txt
 mv password $PWDPATH
-#sudo chown -R step:step /etc/step-ca
 sudo chown -R step:step ${STEPPATH}
 
+msg_info "Creating Service"
 cat <<EOF >/etc/systemd/system/step-ca.service
 [Unit]
 Description=step-ca service
@@ -179,6 +164,7 @@ jq '.authority += {
 
 $STD systemctl daemon-reload
 $STD systemctl enable --now step-ca
+msg_info "Created Service"
 
 #TODO: Do we need to do this? Im a little confused.
 # The step ca bootstrap command essentially allows us to create new certificates on this machine 'step ca certificate code-server.lan code-server.lan.crt code-server.lan.key'
@@ -191,6 +177,10 @@ step ca health
 
 msg_ok "Installed Step CA"
 
+echo "Store these details in a safe location"
+echo "Your CA administrative password is: ${STEP_CA_PROVISIONER_PASSWORD}"
+echo "Your CA fingerprint is : ${STEP_CA_FINGERPRINT}"
+echo "Your password is: ${STEP_CA_PASSWORD}"
 
 #motd_ssh
 #customize
@@ -199,12 +189,6 @@ msg_info "Cleaning up"
 $STD apt-get -y autoremove
 $STD apt-get -y autoclean
 msg_ok "Cleaned"
-
-echo "Store these details in a safe location"
-echo "Your CA administrative password is: ${STEP_CA_PROVISIONER_PASSWORD}"
-echo "Your CA fingerprint is : ${STEP_CA_FINGERPRINT}"
-echo "Your password is: ${STEP_CA_PASSWORD}"
-
 
 #TODO: Modify bash.rc to set STEPPATH=/etc/step ?
 
