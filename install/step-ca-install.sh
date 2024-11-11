@@ -14,7 +14,7 @@
 #update_os
 
 source "../misc/install.func"
-VERBOSE="yes"
+VERBOSE="no"
 color
 verb_ip6
 catch_errors
@@ -80,7 +80,6 @@ if [ "${STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
 fi
 
 $STD step ca init "${setup_args[@]}"
-echo ""
 
 # TODO: Do we need this ?
 if [ "${STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
@@ -95,6 +94,7 @@ shred -u provisioner_password
 cp password ${STEPPATH}/password.txt
 mv password $PWDPATH
 sudo chown -R step:step ${STEPPATH}
+msg_ok "Installed Step CA"
 
 msg_info "Creating Service"
 cat <<EOF >/etc/systemd/system/step-ca.service
@@ -168,16 +168,11 @@ $STD systemctl daemon-reload
 $STD systemctl enable --now step-ca
 msg_info "Created Service"
 
-#TODO: Do we need to do this? Im a little confused.
-# The step ca bootstrap command essentially allows us to create new certificates on this machine 'step ca certificate code-server.lan code-server.lan.crt code-server.lan.key'
-sleep 1
 export STEPPATH=/root/.step
 $STD step ca bootstrap --ca-url https://localhost:9000 --fingerprint $STEP_CA_FINGERPRINT --install
 
 #TODO: Check the result ?
 step ca health
-
-msg_ok "Installed Step CA"
 
 echo "Store these details in a safe location"
 echo "Your CA administrative password is: ${STEP_CA_PROVISIONER_PASSWORD}"
@@ -188,6 +183,8 @@ echo "Your password is: ${STEP_CA_PASSWORD}"
 #customize
 
 msg_info "Cleaning up"
+rm -rf step-ca_amd64.deb
+rm -rf step-cli_amd64.deb
 $STD apt-get -y autoremove
 $STD apt-get -y autoclean
 msg_ok "Cleaned"
