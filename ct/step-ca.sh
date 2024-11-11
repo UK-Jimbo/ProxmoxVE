@@ -11,3 +11,4 @@ source <(curl -s https://raw.githubusercontent.com/UK-Jimbo/ProxmoxVE/refs/heads
 echo "hello"
 echo "from me"
 echo "again"
+echo "fool"
