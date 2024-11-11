@@ -55,10 +55,6 @@ function default_settings() {
   echo_default
 }
 
-function update_script() {
-    msg_ok "No update function implemented"
-}
-
 start
 build_container
 description
