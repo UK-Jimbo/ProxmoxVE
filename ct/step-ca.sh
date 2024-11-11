@@ -9,3 +9,4 @@ source <(curl -s https://raw.githubusercontent.com/UK-Jimbo/ProxmoxVE/refs/heads
 # https://github.com/community-scripts/ProxmoxVE/raw/main/LICENSE
 
 echo "hello"
+echo "from me"
