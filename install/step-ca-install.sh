@@ -40,42 +40,42 @@ mkdir ${STEPPATH}
 useradd --user-group --system --home ${STEPPATH} --shell /bin/false step
 setcap CAP_NET_BIND_SERVICE=+eip $(which step-ca)
 
-DOCKER_STEPCA_INIT_PROVISIONER_NAME="admin"
-DOCKER_STEPCA_INIT_ADMIN_SUBJECT="step"
-DOCKER_STEPCA_INIT_ADDRESS=":9000"
-DOCKER_STEPCA_INIT_DNS_NAMES="localhost,$(hostname -f)"
-DOCKER_STEPCA_INIT_NAME="Smallstep"
-DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT="false"
-DOCKER_STEPCA_INIT_SSH="false"
-DOCKER_STEPCA_INIT_ACME="false"
+STEPCA_INIT_PROVISIONER_NAME="admin"
+STEPCA_INIT_ADMIN_SUBJECT="step"
+STEPCA_INIT_ADDRESS=":9000"
+STEPCA_INIT_DNS_NAMES="localhost,$(hostname -f)"
+STEPCA_INIT_NAME="Smallstep"
+STEPCA_INIT_REMOTE_MANAGEMENT="false"
+STEPCA_INIT_SSH="false"
+STEPCA_INIT_ACME="false"
 
 setup_args=(
-    --name "${DOCKER_STEPCA_INIT_NAME}"
-    --dns "${DOCKER_STEPCA_INIT_DNS_NAMES}"
-    --provisioner "${DOCKER_STEPCA_INIT_PROVISIONER_NAME}"
+    --name "${STEPCA_INIT_NAME}"
+    --dns "${STEPCA_INIT_DNS_NAMES}"
+    --provisioner "${STEPCA_INIT_PROVISIONER_NAME}"
     --password-file "password"
     --provisioner-password-file "provisioner_password"
-    --address "${DOCKER_STEPCA_INIT_ADDRESS}"
+    --address "${STEPCA_INIT_ADDRESS}"
 )
 generate_password > "password"
 generate_password > "provisioner_password"
 
-if [ "${DOCKER_STEPCA_INIT_SSH}" == "true" ]; then
+if [ "${STEPCA_INIT_SSH}" == "true" ]; then
     setup_args=("${setup_args[@]}" --ssh)
 fi
-if [ "${DOCKER_STEPCA_INIT_ACME}" == "true" ]; then
+if [ "${STEPCA_INIT_ACME}" == "true" ]; then
     setup_args=("${setup_args[@]}" --acme)
 fi
-if [ "${DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
+if [ "${STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
     setup_args=("${setup_args[@]}" --remote-management
-                    --admin-subject "${DOCKER_STEPCA_INIT_ADMIN_SUBJECT}"
+                    --admin-subject "${STEPCA_INIT_ADMIN_SUBJECT}"
     )
 fi
 
 $STD step ca init "${setup_args[@]}"
 echo ""
-if [ "${DOCKER_STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
-    echo "👉 Your CA administrative username is: ${DOCKER_STEPCA_INIT_ADMIN_SUBJECT}"
+if [ "${STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
+    echo "👉 Your CA administrative username is: ${STEPCA_INIT_ADMIN_SUBJECT}"
 fi
 
 STEP_CA_FINGERPRINT=$(step certificate fingerprint "${STEPPATH}/certs/root_ca.crt")
@@ -155,7 +155,6 @@ eval "$set_state"
 $STD systemctl daemon-reload
 $STD systemctl enable --now step-ca
 msg_ok "Created Service"
-
 
 sleep 1
 export STEPPATH=/root/.step
