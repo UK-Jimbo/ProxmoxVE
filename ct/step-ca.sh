@@ -56,6 +56,7 @@ function default_settings() {
 }
 
 function update_script() {
+    msg_ok "No update function implemented"
 }
 
 start
