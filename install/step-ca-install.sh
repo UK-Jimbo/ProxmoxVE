@@ -75,9 +75,8 @@ fi
 
 $STD step ca init "${setup_args[@]}"
 
-# TODO:  Do we need this ?
 if [ "${STEPCA_INIT_REMOTE_MANAGEMENT}" == "true" ]; then
-    echo "👉 Your CA administrative username is: ${STEPCA_INIT_ADMIN_SUBJECT}"
+    echo "Your CA administrative username is: ${STEPCA_INIT_ADMIN_SUBJECT}"
 fi
 
 STEP_CA_FINGERPRINT=$(step certificate fingerprint "${STEPPATH}/certs/root_ca.crt")
@@ -88,7 +87,6 @@ shred -u provisioner_password
 cp password /etc/step-ca/password.txt
 mv password $PWDPATH
 sudo chown -R step:step /etc/step-ca
-#cat <<< $(jq '.db.dataSource = "/etc/step-ca/db"' /etc/step-ca/config/ca.json) > /etc/step-ca/config/ca.json
 
 msg_ok "Installed Step-CA"
 
@@ -175,14 +173,9 @@ sleep 1
 export STEPPATH=/root/.step
 $STD step ca bootstrap --ca-url https://localhost:9000 --fingerprint $STEP_CA_FINGERPRINT --install
 
-# TODO: Check result? If not 'ok' throw error ?
-$STD step ca health
-
 motd_ssh
 customize
 
-
-# TODO: Remove .deb files ?
 msg_info "Cleaning up"
 $STD apt-get -y autoremove
 $STD apt-get -y autoclean
@@ -200,13 +193,3 @@ echo "Your CA fingerprint is : ${STEP_CA_FINGERPRINT}"
 # echo "step ca bootstrap --ca-url https://ca.lan:9000 --fingerprint ${STEP_CA_FINGERPRINT} --install"
 
 # TODO: Updates to build.func should not be in this branch
-
-
-# Your CA administrative password is: REp7BVKT8AAruvI2lhL3WHVvQkhQ87KsN2BJWecg
-# Your password is: nC1Ve2unABXbXQYgbXFIFLJfbGYm725I2t8E8cDy
-# Your CA fingerprint is : 3905bb72e10773391fbab35c9efdda7fcbc408e269d9c038370a857d13bc0bdd
-
-# On macOS run the following commands in the terminal
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install step
-step ca bootstrap --ca-url https://ca.lan:9000 --fingerprint 3905bb72e10773391fbab35c9efdda7fcbc408e269d9c038370a857d13bc0bdd --install
