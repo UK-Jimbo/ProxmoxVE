@@ -177,13 +177,16 @@ motd_ssh
 customize
 
 msg_info "Cleaning up"
+rm step-cli_amd64.deb
+rm step-ca_amd64.deb
 $STD apt-get -y autoremove
 $STD apt-get -y autoclean
 msg_ok "Cleaned"
 
-echo "Your CA administrative password is: ${STEP_CA_PROVISIONER_PASSWORD}"
-echo "Your password is: ${STEP_CA_PASSWORD}"
-echo "Your CA fingerprint is : ${STEP_CA_FINGERPRINT}"
+echo "Your CA administrative password is: ${STEP_CA_PROVISIONER_PASSWORD}" > output.txt
+echo "Your password is: ${STEP_CA_PASSWORD}" >> output.txt
+echo "Your CA fingerprint is : ${STEP_CA_FINGERPRINT}"  >> output.txt
+
 # echo ""
 # echo "You now need to trust this Root Certificate on your devices."
 # echo ""
