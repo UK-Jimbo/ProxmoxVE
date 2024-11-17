@@ -26,10 +26,8 @@ echo "Creating SSL directory if it doesn't exist..."
 sudo mkdir -p $SSL_DIR
 sudo chmod 700 $SSL_DIR
 
-# Generate certificate using Step CA
-echo "Generating certificate and private key for $DOMAIN..."
-echo "YourProvisionerPassword" | step ca certificate --provisioner-password-file=password.txt $DOMAIN $CRT_FILE $KEY_FILE
-sudo rm -f password.txt  # Clean up the password file after use
+sudo cp $DOMAIN.crt $SSL_DIR/$DOMAIN.crt
+sudo scp $DOMAIN.key $SSL_DIR/$DOMAIN.key
 
 # Create the reverse proxy configuration for NGINX
 echo "Creating NGINX reverse proxy configuration for $DOMAIN on port $PORT..."

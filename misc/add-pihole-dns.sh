@@ -1,4 +1,5 @@
 #!/bin/bash
+source build.func
 
 # Variables - Set these before running the script
 PIHOLE_SERVER="http://192.168.1.110//admin/api.php"
@@ -27,7 +28,7 @@ fi
 
 # Add DNS entry to Pi-hole
 POST="${PIHOLE_SERVER}/?customdns&action=add&ip=${IP_ADDRESS}&domain=${DOMAIN}&auth=${PIHOLE_API_TOKEN}"
-RESPONSE=$(curl -X POST -d "" "$POST")
+RESPONSE=$(curl -X POST -s -d "" "$POST")
 
 # Check response
 if [[ $RESPONSE == *"success"* ]]; then
