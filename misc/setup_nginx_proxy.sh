@@ -27,10 +27,14 @@ sudo mkdir -p $SSL_DIR
 sudo chmod 700 $SSL_DIR
 
 sudo cp $DOMAIN.crt $SSL_DIR/$DOMAIN.crt
-sudo scp $DOMAIN.key $SSL_DIR/$DOMAIN.key
+sudo cp $DOMAIN.key $SSL_DIR/$DOMAIN.key
 
 # Create the reverse proxy configuration for NGINX
 echo "Creating NGINX reverse proxy configuration for $DOMAIN on port $PORT..."
+
+
+# This doesnt quite work as expected yet, check this post https://chatgpt.com/c/67392c94-a72c-8004-a18b-f44e92c730cc
+
 
 cat <<EOL | sudo tee $NGINX_CONF
 server {
